@@ -8,7 +8,7 @@ public class LakeMeshGenTool :EditorWindow
 {
     string m_UVMat = "Assets/Editor/UVMat.mat";
     string m_DefaultMat = "Assets/Editor/Water.mat";
-    Material m_CurMat;
+    
 
     static LakeMeshGenTool wnd;
 
@@ -21,6 +21,7 @@ public class LakeMeshGenTool :EditorWindow
 
     private List<GameObject> m_VerticePoints;
     private Dictionary<GameObject, bool> m_VerticePointsMap;
+    private List<float> m_ChoosedYvals;
 
     private GameObject m_CenterObj;
     private Vector3 m_BoundsCenter;
@@ -28,16 +29,20 @@ public class LakeMeshGenTool :EditorWindow
     private Vector3 m_GravityCenter;
     private GameObject m_GravityCenterObj;
 
+    private bool m_UseRepeatUV = true;
+    private float m_UVRepeat = 10;
+
     private bool m_LockYaxis;
     private bool m_Choosed = false;
-    private float m_ChoosedYval = 0;
+    private bool m_PointDraged = false;
 
     private float m_VerticeScale;
     private bool m_ShowGizmos = true;
     private bool m_CheckUV = false;
     private Color m_MeshGridColor = Color.black;
+    private Material m_CurMat;
 
- 
+
     [MenuItem("WaterMesh/CreateLakeMeshGenWnd", priority =-110)]
     [MenuItem("GameObject/WaterMesh/EditorLakeMesh", priority = -110)]
     static void CreateWaterMeshGenWnd()
@@ -59,11 +64,16 @@ public class LakeMeshGenTool :EditorWindow
         _serializedObjec = new SerializedObject(this);
         m_VerticePoints = new List<GameObject>();
         m_VerticePointsMap = new Dictionary<GameObject, bool>();
+        m_ChoosedYvals = new List<float>();
 
+        m_PointDraged = false;
         m_LockYaxis = true;
         m_VerticeScale = 1f;
         m_ShowGizmos = true;
         m_CheckUV = false;
+
+        m_UseRepeatUV = true;
+        m_UVRepeat = 10;
 
         if (Selection.activeGameObject)
         {
@@ -86,6 +96,7 @@ public class LakeMeshGenTool :EditorWindow
         }
         m_VerticePoints.Clear();
         m_VerticePointsMap.Clear();
+        m_ChoosedYvals.Clear();
 
         if(m_CenterObj)
         {
@@ -253,6 +264,7 @@ public class LakeMeshGenTool :EditorWindow
     {
         _serializedObjec.Update();
         EditorGUILayout.LabelField("shift+右键添加顶点");
+        EditorGUILayout.LabelField("绿色小球表示UV左下角，绿色Cube表示UV右上角");
         EditorGUILayout.ObjectField("LakeMesh", m_LakeObj, typeof(GameObject), true);
         EditorGUILayout.ObjectField("Mesh", m_Mesh, typeof(Mesh), true);
         if(m_Mesh != null)
@@ -276,6 +288,24 @@ public class LakeMeshGenTool :EditorWindow
         }
         EditorGUILayout.EndHorizontal();
         m_MeshGridColor = EditorGUILayout.ColorField("MeshGridColor", m_MeshGridColor);
+
+        EditorGUILayout.BeginHorizontal();
+        flag = EditorGUILayout.Toggle("UseRepeatUV", m_UseRepeatUV);
+        if(m_UseRepeatUV != flag)
+        {
+            m_UseRepeatUV = flag;
+            RebuildMesh();
+        }
+        if(m_UseRepeatUV)
+        {
+            float repeatUV = EditorGUILayout.FloatField("UVRepeat", m_UVRepeat);
+            if(!Mathf.Approximately(repeatUV, m_UVRepeat))
+            {
+                m_UVRepeat = repeatUV;
+                RebuildMesh();
+            }
+        }
+        EditorGUILayout.EndHorizontal();
 
         float scale = EditorGUILayout.Slider("VerticeScale", m_VerticeScale, 0.1f, 20f);
         if(!Mathf.Approximately(scale, m_VerticeScale))
@@ -352,38 +382,65 @@ public class LakeMeshGenTool :EditorWindow
         }
         else
         {
+            var gos = Selection.gameObjects;
             if(e.type == EventType.MouseDown && e.button == 0)
             {
-                if(Selection.activeGameObject && m_VerticePointsMap.ContainsKey(Selection.activeGameObject))
+                m_Choosed = false;
+                m_ChoosedYvals.Clear();
+                for(int i = 0; i < gos.Length; i++)
                 {
-                    m_Choosed = true;
-                    m_ChoosedYval = Selection.activeGameObject.transform.localPosition.y;
+                    if(m_VerticePointsMap.ContainsKey(gos[i]))
+                    {
+                        m_Choosed = true;
+                    }
+                    m_ChoosedYvals.Add(gos[i].transform.localPosition.y);
                 }
             }
             else if(e.type == EventType.MouseDrag && e.button == 0)
             {
-                if(Selection.activeGameObject && m_VerticePointsMap.ContainsKey(Selection.activeGameObject))
+                bool haveChanged = false;
+                for(int i = 0; i < gos.Length; i++)
                 {
-                    if(m_LockYaxis && m_Choosed)
+                    if(m_VerticePointsMap.ContainsKey(gos[i]))
                     {
-                        Vector3 pos = Selection.activeGameObject.transform.localPosition;
-                        pos.y = m_ChoosedYval;
-                        Selection.activeGameObject.transform.localPosition = pos;
-                        sceneView.Repaint();
+                        haveChanged = true;
+                        if(m_LockYaxis && m_Choosed)
+                        {
+                            Vector3 pos = gos[i].transform.localPosition;
+                            pos.y = m_ChoosedYvals[i];
+                            gos[i].transform.localPosition = pos;
+                        }
                     }
+                }
+                if(haveChanged)
+                {
                     RebuildMesh();
+                    m_PointDraged = true;
+                    sceneView.Repaint();
                 }
             }
             else if((e.type == EventType.MouseUp || e.type == EventType.MouseLeaveWindow) && e.button == 0)
             {
-                if(m_LockYaxis && m_Choosed)
+                bool haveChanged = false;
+                if(m_PointDraged)
                 {
-                    if(Selection.activeGameObject && m_VerticePointsMap.ContainsKey(Selection.activeGameObject))
+                    for(int i=0; i < gos.Length; i++)
                     {
-                        Vector3 pos = Selection.activeGameObject.transform.localPosition;
-                        pos.y = m_ChoosedYval;
-                        Selection.activeGameObject.transform.localPosition = pos;
+                        if(m_VerticePointsMap.ContainsKey(gos[i]))
+                        {
+                            haveChanged = true;
+                            if(m_LockYaxis && m_Choosed)
+                            {
+                                Vector3 pos = gos[i].transform.localPosition;
+                                pos.y = m_ChoosedYvals[i];
+                                gos[i].transform.localPosition = pos;
+                            }
+                        }
+                    }
+                    if(haveChanged)
+                    {
                         RebuildMesh();
+                        m_PointDraged = false;
                         sceneView.Repaint();
                     }
                 }
@@ -417,6 +474,9 @@ public class LakeMeshGenTool :EditorWindow
                 Gizmos.DrawLine(b, c);
             }
         }
+        Gizmos.color = Color.green;
+        Gizmos.DrawSphere(trans.TransformPoint(m_Mesh.bounds.min), 1);
+        Gizmos.DrawCube(trans.TransformPoint(m_Mesh.bounds.max), Vector3.one);
     }
 
     void DrawBoundsCenter()
@@ -512,14 +572,27 @@ public class LakeMeshGenTool :EditorWindow
 
         m_Mesh.RecalculateBounds();
         Vector2[] uvs = new Vector2[count];
-        Vector3 min = m_Mesh.bounds.min;
+        Vector2[] uv2s = new Vector2[count];
+        //Vector3 min = m_Mesh.bounds.min;
         Vector3 size = m_Mesh.bounds.size;
+        Vector3 center = m_Mesh.bounds.center;
+        float _uvRela = size.x > size.z ? size.x : size.z;
         for(int i=0; i < count; i++)
         {
-            uvs[i] = new Vector2((vertices[i].x - min.x) / size.x, (vertices[i].z - min.z) / size.z);
+            //uvs[i] = new Vector2((vertices[i].x - min.x) / size.x, (vertices[i].z - min.z) / size.z);
+            uvs[i] = new Vector2(0.5f + (vertices[i].x - center.x) / m_UVRepeat, 0.5f + (vertices[i].z - center.z) / m_UVRepeat);
+            uv2s[i] = new Vector2(0.5f + (vertices[i].x - center.x) / _uvRela, 0.5f + (vertices[i].z - center.z) / _uvRela);
         }
-        m_Mesh.uv = uvs;
-
+        if(m_UseRepeatUV)
+        {
+            m_Mesh.uv = uvs;
+            m_Mesh.uv2 = uv2s;
+        }
+        else
+        {
+            m_Mesh.uv = uv2s;
+            m_Mesh.uv2 = uvs;
+        }
         m_Mesh.RecalculateNormals();
         m_Mesh.RecalculateTangents();
     }

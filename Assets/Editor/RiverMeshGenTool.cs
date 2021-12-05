@@ -10,6 +10,7 @@ using System.Linq;
 public class RiverCfgJson
 {
     public bool horizontal = true;
+    public bool useUVRepeat = false;
     public float uvRepeat = 10;
     public int perGridNum = 1;
     public float smoothNess = 0.01f;
@@ -40,14 +41,14 @@ public class RiverMeshGenTool : EditorWindow
     private List<float> m_SmoothWayWidth;
     private List<Vector3> m_SmoothWayPoints;
     private List<Vector3> m_SmoothWayDir;
-    
     private List<Vector3> m_Vertices;
     private List<int> m_Triangles;
     private List<Vector2> m_UVs;
+    private List<Vector2> m_UV2s;
 
     private bool m_LockYaxis = true;
     private bool m_Choosed = false;
-    private float m_ChoosedYVal = 0;
+    private List<float> m_ChoosedYVals;
 
     private Color m_MeshGridColor = Color.black;
     private bool m_ShowGizmos = true;
@@ -57,12 +58,17 @@ public class RiverMeshGenTool : EditorWindow
     private float m_SmoothNess = 0.01f;
     private int m_SmoothAmount = 5;
     private float m_DefaultWidth = 10;
+
+    private bool m_UseRepeatUV = true;
     private float m_UVRepeat = 10;
     private bool m_Horizontal = true;
     private bool m_Vertical = false;
 
     private bool m_PointDraged = false;
     private bool m_TempDirty = false;
+
+    private float m_RiverLength = 0;
+    private float m_RiverMaxWidth = 0;
 
     private GameObject m_CenterObj;
 
@@ -95,6 +101,8 @@ public class RiverMeshGenTool : EditorWindow
         m_Vertices = new List<Vector3>();
         m_Triangles = new List<int>();
         m_UVs = new List<Vector2>();
+        m_UV2s = new List<Vector2>();
+        m_ChoosedYVals = new List<float>();
 
         m_LockYaxis = true;
         m_ShowGizmos = true;
@@ -104,6 +112,7 @@ public class RiverMeshGenTool : EditorWindow
         m_SmoothNess = 0.01f;
         m_SmoothAmount = 5;
         m_DefaultWidth = 10;
+        m_UseRepeatUV = true;
         m_UVRepeat = 10;
         m_PerGridNum = 1;
 
@@ -131,6 +140,7 @@ public class RiverMeshGenTool : EditorWindow
         }
         m_WayPoints.Clear();
         m_WayPointsWidth.Clear();
+        m_ChoosedYVals.Clear();
         if (m_CenterObj)
         {
             if(m_GizmosHelper)
@@ -270,13 +280,33 @@ public class RiverMeshGenTool : EditorWindow
 
     void LoadFromJson()
     {
-        var objs = Selection.objects;
+        /*var objs = Selection.objects;
         if(objs == null || objs.Length != 1 || !(objs[0] is TextAsset))
         {
             EditorUtility.DisplayDialog("RiverMeshTips", string.Format("请选择一个RiverJson配置文件(目录：【{0}】)", m_CfgPath), "确定");
             return;
+        }*/
+        string path = EditorUtility.OpenFilePanelWithFilters("SelectRiverConfig", m_CfgPath, new string[] { "Json", "json" });
+        if (string.IsNullOrEmpty(path)) return;
+        if(!path.EndsWith(".json"))
+        {
+            EditorUtility.DisplayDialog("SelectRiverConfig", string.Format("请选择有效的RiverJson配置文件（目录：【{0}】）", m_CfgPath), "确定");
+            return;
         }
-        LoadFromJson(objs[0] as TextAsset);
+        int index = path.IndexOf(Application.dataPath);
+        if(index < 0)
+        {
+            EditorUtility.DisplayDialog("SelectRiverConfig", string.Format("请选择有效的RiverJson配置文件（目录【{0}】）", m_CfgPath), "确定");
+            return;
+        }
+        path = "Assets" + path.Substring(index + Application.dataPath.Length);
+        var txt = AssetDatabase.LoadAssetAtPath<TextAsset>(path);
+        if(txt == null)
+        {
+            EditorUtility.DisplayDialog("SelectRiverConfig", string.Format("请选择有效的RiverJson配置文件（目录【{0}】）", m_CfgPath), "确定");
+            return;
+        }
+        LoadFromJson(txt);
     }   
 
     void LoadFromJson(TextAsset txt)
@@ -286,6 +316,7 @@ public class RiverMeshGenTool : EditorWindow
         {
             m_Horizontal = cfgJson.horizontal;
             m_Vertical = !m_Horizontal;
+            m_UseRepeatUV = cfgJson.useUVRepeat;
             m_UVRepeat = cfgJson.uvRepeat;
             m_PerGridNum = cfgJson.perGridNum;
             m_SmoothNess = cfgJson.smoothNess;
@@ -359,6 +390,7 @@ public class RiverMeshGenTool : EditorWindow
         }
         RiverCfgJson cfgJson = new RiverCfgJson();
         cfgJson.horizontal = m_Horizontal;
+        cfgJson.useUVRepeat = m_UseRepeatUV;
         cfgJson.uvRepeat = m_UVRepeat;
         cfgJson.perGridNum = m_PerGridNum;
         cfgJson.smoothNess = m_SmoothNess;
@@ -431,7 +463,15 @@ public class RiverMeshGenTool : EditorWindow
             }
         }
         EditorGUILayout.EndHorizontal();
-
+        
+        EditorGUILayout.BeginHorizontal();
+        float defaultWidth = EditorGUILayout.FloatField("DefaultWidth", m_DefaultWidth);
+        if(!Mathf.Approximately(defaultWidth, m_DefaultWidth))
+        {
+            m_DefaultWidth = defaultWidth;
+            RebuildRiverMesh();
+        }
+        
         var gos = Selection.gameObjects;
         if (gos != null && gos.Length == 1 && m_WayPointsMap.ContainsKey(gos[0]))
         {
@@ -447,19 +487,26 @@ public class RiverMeshGenTool : EditorWindow
                 }
             }
         }
+        EditorGUILayout.EndHorizontal();
+
         EditorGUILayout.BeginHorizontal();
-        float defaultWidth = EditorGUILayout.FloatField("DefaultWidth", m_DefaultWidth);
-        if(!Mathf.Approximately(defaultWidth, m_DefaultWidth))
+
+        flag = EditorGUILayout.Toggle("UseRepeatUV", m_UseRepeatUV);
+        if(m_UseRepeatUV != flag)
         {
-            m_DefaultWidth = defaultWidth;
-            RebuildRiverMesh();
-        }
-        float repeatUV = EditorGUILayout.FloatField("UVRepeat", m_UVRepeat);
-        if(!Mathf.Approximately(repeatUV, m_UVRepeat))
-        {
-            m_UVRepeat = repeatUV;
+            m_UseRepeatUV = flag;
             RebuildRiverMesh();
             SaveTempJson();
+        }
+        if(m_UseRepeatUV)
+        {
+            float repeatUV = EditorGUILayout.FloatField("UVRepeat", m_UVRepeat);
+            if(!Mathf.Approximately(repeatUV, m_UVRepeat))
+            {
+                m_UVRepeat = repeatUV;
+                RebuildRiverMesh();
+                SaveTempJson();
+            }
         }
         EditorGUILayout.EndHorizontal();
 
@@ -660,45 +707,70 @@ public class RiverMeshGenTool : EditorWindow
         }
         else
         {
+            var gos = Selection.gameObjects;
             if(e.type == EventType.MouseDown && e.button == 0)
             {
-                if(Selection.activeGameObject && m_WayPointsMap.ContainsKey(Selection.activeGameObject))
+                m_Choosed = false;
+                m_ChoosedYVals.Clear();
+                for(int i=0; i < gos.Length; i++)
                 {
-                    m_Choosed = true;
-                    m_ChoosedYVal = Selection.activeGameObject.transform.localPosition.y;
+                    if(m_WayPointsMap.ContainsKey(gos[i]))
+                    {
+                        m_Choosed = true;
+                    }
+                    m_ChoosedYVals.Add(gos[i].transform.localPosition.y);
                 }
             }
             else if (e.type == EventType.MouseDrag && e.button == 0)
-            { 
-                if(Selection.activeGameObject && m_WayPointsMap.ContainsKey(Selection.activeGameObject))
+            {
+                bool haveChanged = false;
+                for(int i = 0; i < gos.Length; i++)
                 {
-                    if(m_LockYaxis && m_Choosed)
+                    if(m_WayPointsMap.ContainsKey(gos[i]))
                     {
-                        Vector3 pos = Selection.activeGameObject.transform.localPosition;
-                        pos.y = m_ChoosedYVal;
-                        Selection.activeGameObject.transform.localPosition = pos;
-                        sceneView.Repaint();
+                        haveChanged = true;
+                        if(m_LockYaxis && m_Choosed)
+                        {
+                            Vector3 pos = gos[i].transform.localPosition;
+                            pos.y = m_ChoosedYVals[i];
+                            gos[i].transform.localPosition = pos;
+                        }
                     }
+                }
+                if(haveChanged)
+                {
                     RebuildRiverMesh();
                     m_PointDraged = true;
+                    sceneView.Repaint();
                 }
             }
             else if((e.type == EventType.MouseUp || e.type == EventType.MouseLeaveWindow) && e.button == 0)
             {
-                if(m_PointDraged && Selection.activeGameObject && m_WayPointsMap.ContainsKey(Selection.activeGameObject))
+                bool haveChanged = false;
+                if(m_PointDraged)
                 {
-                    if(m_LockYaxis && m_Choosed)
+                    for(int i = 0; i < gos.Length; i++)
                     {
-                        Vector3 pos = Selection.activeGameObject.transform.localPosition;
-                        pos.y = m_ChoosedYVal;
-                        Selection.activeGameObject.transform.localPosition = pos;
+                        if(m_WayPointsMap.ContainsKey(gos[i]))
+                        {
+                            haveChanged = true;
+                            if(m_LockYaxis && m_Choosed)
+                            {
+                                Vector3 pos = gos[i].transform.localPosition;
+                                pos.y = m_ChoosedYVals[i];
+                                gos[i].transform.localPosition = pos;
+                            }
+                        }
+                    }
+                    if(haveChanged)
+                    {
+                        SaveTempJson();
                         RebuildRiverMesh();
+                        m_PointDraged = false;
                         sceneView.Repaint();
                     }
-                    SaveTempJson();
-                    m_PointDraged = false;
+                    m_Choosed = false;
                 }
-                m_Choosed = false;
             }
             else if(e.shift && e.keyCode == KeyCode.D)
             {
@@ -756,7 +828,7 @@ public class RiverMeshGenTool : EditorWindow
         m_SmoothWayDir.Clear();
         if (m_WayPoints.Count < 2) return;
         Vector3[] _wayPoints = m_WayPoints.Select(point => point.transform.localPosition).ToArray();
-        GetWayPoints(_wayPoints, m_WayPointsWidth, m_SmoothAmount, m_SmoothNess, ref m_SmoothWayPoints, ref m_SmoothWayWidth, ref m_SmoothWayDir);
+        GetWayPoints(_wayPoints, m_WayPointsWidth, m_SmoothAmount, m_SmoothNess, ref m_SmoothWayPoints, ref m_SmoothWayWidth, ref m_SmoothWayDir, ref m_RiverLength, ref m_RiverMaxWidth);
 
         RiverVerticeCaculate(m_Mesh, m_SmoothWayPoints, m_SmoothWayDir);
         m_Mesh.RecalculateNormals();
@@ -780,9 +852,12 @@ public class RiverMeshGenTool : EditorWindow
         m_Vertices.Clear();
         m_Triangles.Clear();
         m_UVs.Clear();
+        m_UV2s.Clear();
 
         float _curLength = 0;
         float _curUVRate = 0;
+        float _curUV2Rate = 0;
+        float _uvRela = m_RiverLength > m_RiverMaxWidth ? m_RiverLength : m_RiverMaxWidth;
         for(int i=0; i < _resultWayPoints.Count; i++)
         {
             Vector3 _wayPoint = _resultWayPoints[i];
@@ -816,6 +891,7 @@ public class RiverMeshGenTool : EditorWindow
 
                 _curLength += Vector3.Distance(_resultWayPoints[i - 1], _resultWayPoints[i]); //Vector3.Distance(_vertices[2 * (i - 1)], _vertices[2 * i]);
                 _curUVRate = _curLength / m_UVRepeat;
+                _curUV2Rate = _curLength / _uvRela;
                 Vector3 point;
                 if (Mathf.Abs(vecA.y - preA.y) <= 0.01f && CheckLineCross(preA, preB, vecA, vecB, out point, true))
                 {
@@ -827,33 +903,43 @@ public class RiverMeshGenTool : EditorWindow
                     continue;
                 }
             }
-            Vector2 uv;
+            Vector2 uv, uv2;
+            float _perAdditive = (2 * _halfRiverWidth / m_UVRepeat) / m_PerGridNum;
+            float _perAdditive2 = (2 * _halfRiverWidth / _uvRela) / m_PerGridNum;
             if (m_Horizontal)
             {
                 uv.x = _curUVRate;
-                uv.y = 0;
+                uv.y = 0.5f - _halfRiverWidth / m_UVRepeat;
+                uv2.x = _curUV2Rate;
+                uv2.y = 0.5f - _halfRiverWidth / _uvRela;
             }
             else
             {
-                uv.x = 1;
+                uv.x = _halfRiverWidth / m_UVRepeat + 0.5f;
                 uv.y = _curUVRate;
+                uv2.x = _halfRiverWidth / _uvRela + 0.5f;
+                uv2.y = _curUV2Rate;
             }
             Vector3 vertex = vecA;
             m_Vertices.Add(vertex);
             m_UVs.Add(uv);
+            m_UV2s.Add(uv2);
             for(int j=1; j <= m_PerGridNum; j++)
             {
                 vertex += (vecB - vecA) / m_PerGridNum;
                 if (m_Horizontal)
                 {
-                    uv.y += 1f / m_PerGridNum;
+                    uv.y += _perAdditive;
+                    uv2.y += _perAdditive2;
                 }
                 else
                 {
-                    uv.x -= 1f / m_PerGridNum;
+                    uv.x -= _perAdditive;
+                    uv2.x -= _perAdditive2;
                 }
                 m_Vertices.Add(vertex);
                 m_UVs.Add(uv);
+                m_UV2s.Add(uv2);
             }
             if(i>=1)
             {
@@ -873,7 +959,16 @@ public class RiverMeshGenTool : EditorWindow
         }
         _riverMesh.vertices = m_Vertices.ToArray();
         _riverMesh.triangles = m_Triangles.ToArray();
-        _riverMesh.uv = m_UVs.ToArray();
+        if(m_UseRepeatUV)
+        {
+            _riverMesh.uv = m_UVs.ToArray();
+            _riverMesh.uv2 = m_UV2s.ToArray();
+        }
+        else
+        {
+            _riverMesh.uv = m_UV2s.ToArray();
+            _riverMesh.uv2 = m_UVs.ToArray();
+        }
     }
 
     void CheckForwardLineCross(ref Vector3 a, ref Vector3 b, Vector3 preA, Vector3 preB, Vector3 lastWayDir, Vector3 wayDir, Vector3 wayPoint)
@@ -1065,13 +1160,15 @@ public class RiverMeshGenTool : EditorWindow
 
     #region Catmull-rom曲线
     //根据提供的关键点获取平滑曲线
-    public void GetWayPoints(Vector3[] points, List<float> pointsWidth, int smoothAmount, float smoothNess, ref List<Vector3> wayPoints, ref List<float> wayPointsWidth, ref List<Vector3> wayPointsDir)
+    public void GetWayPoints(Vector3[] points, List<float> pointsWidth, int smoothAmount, float smoothNess, ref List<Vector3> wayPoints, ref List<float> wayPointsWidth, ref List<Vector3> wayPointsDir, ref float riverLength, ref float maxWidth)
     {
         if (points == null || points.Length <= 1) { Debug.LogError("Points Empty!!!"); return; }
         
         wayPointsWidth.Clear();
         wayPoints.Clear();
         wayPointsDir.Clear();
+        riverLength = 0;
+        maxWidth = 0;
 
         Vector3[] linePoints = PathControlPointGenerator(points);
         Vector3 bigDir;
@@ -1115,6 +1212,11 @@ public class RiverMeshGenTool : EditorWindow
             fromWidth = pointsWidth[i];
             tgtWidth = pointsWidth[i + 1];
             distance = Vector3.Distance(points[i], points[i + 1]);
+            if(wayPoints.Count > 1)
+            {
+                riverLength += Vector3.Distance(wayPoints[wayPoints.Count - 1], wayPoints[wayPoints.Count - 2]);
+            }
+            maxWidth = maxWidth < wayPointsWidth[wayPointsWidth.Count - 1] ? wayPointsWidth[wayPointsWidth.Count - 1] : maxWidth;
             for (int j = 1; j < smoothAmount; j++)
             {
                 Vector3 smoothPoint = Interp(linePoints, i, (float)j / smoothAmount);
@@ -1134,6 +1236,11 @@ public class RiverMeshGenTool : EditorWindow
                     wayPointsWidth.Add(width);
                     wayPointsDir.Add(dir);
                     wayPoints.Add(smoothPoint);
+                    if(wayPoints.Count > 1)
+                    {
+                        riverLength += Vector3.Distance(wayPoints[wayPoints.Count - 1], wayPoints[wayPoints.Count - 2]);
+                    }
+                    maxWidth = maxWidth < wayPointsWidth[wayPointsWidth.Count - 1] ? wayPointsWidth[wayPointsWidth.Count - 1] : maxWidth;
                 }
             }
         }
@@ -1142,6 +1249,11 @@ public class RiverMeshGenTool : EditorWindow
         wayPointsDir.Add(dir);
         wayPointsWidth.Add(pointsWidth[pointsWidth.Count - 1]);
         wayPoints.Add(points[points.Length - 1]);
+        if(wayPoints.Count > 1)
+        {
+            riverLength += Vector3.Distance(wayPoints[wayPoints.Count - 1], wayPoints[wayPoints.Count - 2]);
+        }
+        maxWidth = maxWidth < wayPointsWidth[wayPointsWidth.Count - 1] ? wayPointsWidth[wayPointsWidth.Count - 1] : maxWidth;
     }
 
     //因为4个才能点控制一条曲线， 添加首尾控制点
