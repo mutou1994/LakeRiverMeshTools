@@ -52,7 +52,7 @@ public class LakeMeshGenTool :EditorWindow
             wnd.Close();
             wnd = null;
         }
-        wnd = GetWindow<LakeMeshGenTool>("WaterMeshGenWnd");
+        wnd = GetWindow<LakeMeshGenTool>("LakeMeshGenWnd");
         wnd.minSize = new Vector2(250, 100);
         wnd.Show();
     }
@@ -263,7 +263,8 @@ public class LakeMeshGenTool :EditorWindow
     private void OnGUI()
     {
         _serializedObjec.Update();
-        EditorGUILayout.LabelField("shift+右键添加顶点");
+        EditorGUILayout.LabelField("shift+右键 添加顶点");
+        EditorGUILayout.LabelField("shift+D 删除顶点");
         EditorGUILayout.LabelField("绿色小球表示UV左下角，绿色Cube表示UV右上角");
         EditorGUILayout.ObjectField("LakeMesh", m_LakeObj, typeof(GameObject), true);
         EditorGUILayout.ObjectField("Mesh", m_Mesh, typeof(Mesh), true);
@@ -349,7 +350,7 @@ public class LakeMeshGenTool :EditorWindow
                 SetMeshToCenter(m_Mesh.bounds.center);
             }
         }
-        if(GUILayout.Button("SaveWater"))
+        if(GUILayout.Button("SaveLake"))
         {
             SaveMesh();
         }
